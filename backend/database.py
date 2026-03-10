@@ -84,14 +84,18 @@ def get_default_tenant() -> Dict:
 # ==================== CUSTOMER FUNCTIONS ====================
 
 def get_all_customers(tenant_id: str) -> List[Dict]:
-    """Get all customers for a tenant"""
+    """Get all customers for a tenant with calculated RFM metrics"""
     with get_db_connection() as conn:
         with get_cursor(conn) as cursor:
             cursor.execute("""
                 SELECT 
                     c.*,
                     COUNT(ph.purchase_id) as total_purchases,
-                    COALESCE(SUM(ph.item_price), 0) as total_spent
+                    COALESCE(SUM(ph.item_price), 0) as total_spent,
+                    COALESCE(
+                        EXTRACT(DAY FROM (NOW() - MAX(ph.purchase_timestamp))),
+                        365
+                    ) as recency
                 FROM jenita_dev.customers c
                 LEFT JOIN jenita_dev.purchase_history ph ON c.customer_id = ph.customer_id
                 WHERE c.tenant_id = %s
@@ -132,6 +136,30 @@ def update_customer_segment(customer_id: str, segment_tag: str):
                 SET segment_tag = %s 
                 WHERE customer_id = %s;
             """, (segment_tag, customer_id))
+
+
+def update_customer_segments_bulk(customer_segments: List[Dict[str, str]]):
+    """Bulk update customer segment tags in a single DB round trip"""
+    if not customer_segments:
+        return
+
+    values = [
+        (segment['customer_id'], segment['segment_name'])
+        for segment in customer_segments
+    ]
+
+    with get_db_connection() as conn:
+        with get_cursor(conn) as cursor:
+            execute_values(
+                cursor,
+                """
+                UPDATE jenita_dev.customers AS c
+                SET segment_tag = data.segment_name
+                FROM (VALUES %s) AS data(customer_id, segment_name)
+                WHERE c.customer_id::text = data.customer_id;
+                """,
+                values,
+            )
 
 # ==================== CAMPAIGN FUNCTIONS ====================
 

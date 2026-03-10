@@ -1,13 +1,15 @@
 "use client";
 import { useState, useEffect } from 'react';
-import { Filter, Users, Calendar, ShoppingCart, DollarSign, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { Filter, Users, Calendar, ShoppingCart, DollarSign, ArrowRight, Loader2 } from 'lucide-react';
 
 export default function AudienceSelector({ 
   rawData = [], 
-  onAudienceConfirmed 
+  onAudienceConfirmed,
+  isConfirming = false
 }: { 
   rawData: any[], 
-  onAudienceConfirmed: (filteredData: any[]) => void 
+  onAudienceConfirmed: (filteredData: any[]) => void | Promise<void>,
+  isConfirming?: boolean
 }) {
   // Filter States
   const [minFreq, setMinFreq] = useState<number | ''>('');
@@ -101,23 +103,33 @@ export default function AudienceSelector({
               <div className="flex justify-between text-sm border-b border-indigo-800 pb-2">
                 <span className="text-indigo-200">Avg Spend:</span>
                 <span className="font-bold text-green-300">
-                  ₹{filteredData.length > 0 ? Math.round(filteredData.reduce((acc, c) => acc + c.monetary, 0) / filteredData.length) : 0}
+                  ₹{filteredData.length > 0 ? Math.round(filteredData.reduce((acc, c) => acc + Number(c.monetary ?? 0), 0) / filteredData.length) : 0}
                 </span>
               </div>
               <div className="flex justify-between text-sm border-b border-indigo-800 pb-2">
                 <span className="text-indigo-200">Avg Orders:</span>
                 <span className="font-bold text-blue-300">
-                  {filteredData.length > 0 ? Math.round(filteredData.reduce((acc, c) => acc + c.frequency, 0) / filteredData.length) : 0}
+                  {filteredData.length > 0 ? Math.round(filteredData.reduce((acc, c) => acc + Number(c.frequency ?? 0), 0) / filteredData.length) : 0}
                 </span>
               </div>
             </div>
           </div>
 
-          <button 
+          <button
             onClick={() => onAudienceConfirmed(filteredData)}
-            className="w-full bg-[#5D00B1] border border-indigo-400 hover:bg-white hover:text-[#4B0082] py-4 rounded-xl font-bold flex justify-center items-center gap-2 transition-all"
+            disabled={isConfirming}
+            className="w-full bg-[#5D00B1] border border-indigo-400 hover:bg-white hover:text-[#4B0082] py-4 rounded-xl font-bold flex justify-center items-center gap-2 transition-all disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-[#5D00B1] disabled:hover:text-white"
           >
-            Confirm Audience <ArrowRight size={18} />
+            {isConfirming ? (
+              <>
+                <Loader2 size={18} className="animate-spin" />
+                Segmenting Audience...
+              </>
+            ) : (
+              <>
+                Confirm Audience <ArrowRight size={18} />
+              </>
+            )}
           </button>
         </div>
 

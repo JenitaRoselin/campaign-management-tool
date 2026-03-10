@@ -2,13 +2,12 @@
 
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Suspense, useState, useEffect } from 'react';
-import { 
-  LayoutDashboard, Users, BarChart3, Settings, 
-  LogOut, Megaphone, Plus, Loader2, TrendingUp, Calendar 
+import {
+  LayoutDashboard, Users, BarChart3, Settings,
+  LogOut, Megaphone, Plus, Loader2, TrendingUp, Calendar
 } from 'lucide-react';
-import CustomerClusters from '@/components/CustomerClusters';
 import CampaignGenerator from '@/components/CampaignGenerator';
-import CampaignArchitect from '@/components/CampaignArchitect'; 
+import CampaignArchitect from '@/components/CampaignArchitect';
 import CampaignHistory from '@/components/CampaignHistory';
 import AudienceSelector from '@/components/AudienceSelector';
 
@@ -16,7 +15,7 @@ function DashboardContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const tenantId = searchParams.get('id');
-  
+ 
   // State management
   const [companyName, setCompanyName] = useState<string>('');
   const [currentTab, setCurrentTab] = useState('Overview');
@@ -91,8 +90,8 @@ function DashboardContent() {
     setCurrentTab('Targeting');
   };
 
-  const filteredCustomers = selectedSegment === 'All' 
-    ? segmentData 
+  const filteredCustomers = selectedSegment === 'All'
+    ? segmentData
     : segmentData.filter(c => c.segment_name === selectedSegment);
 
   return (
@@ -100,9 +99,9 @@ function DashboardContent() {
       {/* SIDEBAR */}
       <aside className="w-64 bg-[#4B0082] text-white p-6 flex flex-col h-screen sticky top-0">
         <h2 className="text-2xl font-bold mb-10 text-indigo-100">Campaign Manager</h2>
-        
+       
         {/* Create Campaign Button */}
-        <button 
+        <button
           onClick={handleCreateNewCampaign}
           disabled={isLoading}
           className="w-full mb-6 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold py-3 px-4 rounded-xl hover:from-purple-600 hover:to-pink-600 transition-all shadow-lg flex items-center justify-center gap-2"
@@ -110,7 +109,7 @@ function DashboardContent() {
           {isLoading ? <Loader2 className="animate-spin" size={20}/> : <Plus size={20} />}
           Create Campaign
         </button>
-        
+       
         <nav className="flex-1 space-y-2">
           <button onClick={() => setCurrentTab('Overview')} className="w-full text-left">
             <NavItem icon={<LayoutDashboard size={20}/>} label="All Campaigns" active={currentTab === 'Overview'} />
@@ -157,7 +156,7 @@ function DashboardContent() {
               <div className="bg-white p-20 rounded-3xl border-2 border-dashed flex flex-col items-center">
                 <Megaphone size={48} className="mb-4 opacity-20 text-gray-400" />
                 <p className="text-gray-400 italic mb-4">No campaigns yet</p>
-                <button 
+                <button
                   onClick={handleCreateNewCampaign}
                   className="bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold py-3 px-6 rounded-xl hover:from-purple-600 hover:to-pink-600 transition-all shadow-lg flex items-center gap-2"
                 >
@@ -168,8 +167,8 @@ function DashboardContent() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {campaigns.map((campaign) => (
-                  <CampaignCard 
-                    key={campaign.campaign_id} 
+                  <CampaignCard
+                    key={campaign.campaign_id}
                     campaign={campaign}
                     onRunAgain={() => handleRunAgain(campaign)}
                     onViewROI={() => {
@@ -188,20 +187,22 @@ function DashboardContent() {
           <div className="space-y-10 animate-in fade-in duration-500">
             {segmentData.length > 0 ? (
               <>
-                <CustomerClusters data={segmentData} />
                 <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 overflow-hidden">
                   <div className="p-6 border-b border-gray-50 flex justify-between items-center bg-gray-50/50">
                     <h3 className="font-bold text-gray-700">Detailed Customer Breakdown</h3>
-                    <select 
+                   
+                    {/* --- FULLY DYNAMIC DROPDOWN --- */}
+                    <select
                       className="border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 ring-indigo-200"
                       onChange={(e) => setSelectedSegment(e.target.value)}
+                      value={selectedSegment}
                     >
                       <option value="All">All Segments</option>
-                      <option value="Premium Customers">Premium</option>
-                      <option value="Explorers">Explorers</option>
-                      <option value="Occasional Buyers">Occasional</option>
-                      <option value="Price-Sensitive Customers">Price Sensitive</option>
+                      {Array.from(new Set(segmentData.map(c => c.segment_name))).map((seg: any) => (
+                        <option key={seg} value={seg}>{seg}</option>
+                      ))}
                     </select>
+
                   </div>
                   <div className="max-h-[400px] overflow-y-auto">
                     <table className="w-full text-left">
@@ -217,15 +218,14 @@ function DashboardContent() {
                         {filteredCustomers.slice(0, 50).map((customer, i) => (
                           <tr key={i} className="hover:bg-indigo-50/30 transition-colors">
                             <td className="px-6 py-4 font-mono text-xs text-gray-600">{customer.customer_id}</td>
+                           
+                            {/* --- FULLY DYNAMIC BADGES --- */}
                             <td className="px-6 py-4">
-                              <span className={`px-3 py-1 rounded-full text-[10px] font-bold ${
-                                customer.segment_name === 'Premium Customers' ? 'bg-green-100 text-green-700' :
-                                customer.segment_name === 'Explorers' ? 'bg-orange-100 text-orange-700' :
-                                'bg-gray-100 text-gray-700'
-                              }`}>
+                              <span className="px-3 py-1 rounded-full text-[10px] font-bold bg-purple-100 text-purple-700 border border-purple-200 shadow-sm">
                                 {customer.segment_name}
                               </span>
                             </td>
+
                             <td className="px-6 py-4 font-semibold text-gray-700">₹{customer.monetary}</td>
                             <td className="px-6 py-4 text-gray-500">{customer.frequency} orders</td>
                           </tr>
@@ -245,30 +245,51 @@ function DashboardContent() {
         {currentTab === 'Targeting' && (
           <div className="animate-in fade-in duration-500">
             {rawSegmentData.length > 0 ? (
-              <AudienceSelector 
-                rawData={rawSegmentData} 
+              <AudienceSelector
+                rawData={rawSegmentData}
+                isConfirming={isLoading}
                 onAudienceConfirmed={async (filtered) => {
+                  if (filtered.length === 0) {
+                    alert('No customers match your current filters. Please adjust and try again.');
+                    return;
+                  }
+
                   setIsLoading(true);
                   // Dynamically segment the filtered customers
                   try {
                     const customerIds = filtered.map(c => c.customer_id);
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 60000);
+
                     const response = await fetch('http://localhost:8000/api/segment-customers-dynamic', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ customer_ids: customerIds })
+                      body: JSON.stringify({ customer_ids: customerIds }),
+                      signal: controller.signal,
                     });
+
+                    clearTimeout(timeoutId);
                     const result = await response.json();
-                    if (result.status === 'success') {
-                      setSegmentData(result.data);
-                      setSummary(result.summary);
-                      setCurrentTab('AI Insights');
+
+                    if (!response.ok || result.status !== 'success') {
+                      throw new Error(result?.detail || result?.message || 'Failed to segment customers');
                     }
+
+                    setSegmentData(Array.isArray(result.data) ? result.data : []);
+                    setSummary(result.summary ?? null);
+                    setSelectedSegment('All');
+                    setCurrentTab('AI Insights');
                   } catch (error) {
-                    alert('Failed to segment customers');
+                    console.error('Failed to segment customers:', error);
+                    if (error instanceof Error && error.name === 'AbortError') {
+                      alert('Segmentation timed out after 60 seconds. Please try a smaller audience or retry.');
+                    } else {
+                      alert(error instanceof Error ? error.message : 'Failed to segment customers');
+                    }
                   } finally {
                     setIsLoading(false);
                   }
-                }} 
+                }}
               />
             ) : (
               <div className="p-20 text-center text-gray-400 italic bg-white rounded-3xl border border-dashed">
@@ -281,8 +302,8 @@ function DashboardContent() {
         {/* CAMPAIGNS TAB */}
         {currentTab === 'Campaigns' && (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
-            <CampaignArchitect 
-              tenantName={companyName || 'Your Enterprise'} 
+            <CampaignArchitect
+              tenantName={companyName || 'Your Enterprise'}
               segmentData={segmentData}
             />
           </div>
@@ -364,7 +385,7 @@ function CampaignCard({ campaign, onRunAgain, onViewROI }: any) {
           {campaign.status}
         </span>
       </div>
-      
+     
       <div className="grid grid-cols-2 gap-3 mb-4">
         <div className="bg-gray-50 rounded-lg p-3">
           <p className="text-xs text-gray-500 mb-1">Recipients</p>
@@ -375,7 +396,7 @@ function CampaignCard({ campaign, onRunAgain, onViewROI }: any) {
           <p className="text-xl font-bold text-green-600">{campaign.open_rate || 0}%</p>
         </div>
       </div>
-      
+     
       <div className="flex gap-2">
         <button
           onClick={onRunAgain}
@@ -514,7 +535,7 @@ function NavItem({ icon, label, active = false }: { icon: any, label: string, ac
       </div>
     );
   }
-  
+ 
   function StatCard({ title, value }: { title: string, value: string }) {
     return (
       <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
