@@ -4,7 +4,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { Suspense, useState, useEffect } from 'react';
 import {
   LayoutDashboard, Users, BarChart3, Settings,
-  LogOut, Megaphone, Plus, Loader2, TrendingUp, Calendar
+  LogOut, Megaphone, Plus, Loader2, TrendingUp, Calendar, Trash2
 } from 'lucide-react';
 import CampaignGenerator from '@/components/CampaignGenerator';
 import CampaignArchitect from '@/components/CampaignArchitect';
@@ -88,6 +88,28 @@ function DashboardContent() {
     setSelectedCampaign(campaign);
     await fetchAllCustomers();
     setCurrentTab('Targeting');
+  };
+
+  const handleDeleteCampaign = async (campaignId: string, campaignName: string) => {
+    if (!window.confirm('Are you sure?')) {
+      return;
+    }
+    try {
+      const response = await fetch(`http://localhost:8000/api/campaigns/${campaignId}`, {
+        method: 'DELETE'
+      });
+      const result = await response.json();
+      if (result.status === 'success') {
+        // Remove the campaign from the list
+        setCampaigns(campaigns.filter(c => c.campaign_id !== campaignId));
+        alert('Campaign deleted successfully');
+      } else {
+        alert('Failed to delete campaign: ' + result.detail);
+      }
+    } catch (error) {
+      console.error('Error deleting campaign:', error);
+      alert('Error deleting campaign');
+    }
   };
 
   const filteredCustomers = selectedSegment === 'All'
@@ -175,6 +197,7 @@ function DashboardContent() {
                       setSelectedCampaign(campaign);
                       setCurrentTab('ROI');
                     }}
+                    onDelete={() => handleDeleteCampaign(campaign.campaign_id, campaign.campaign_name)}
                   />
                 ))}
               </div>
@@ -305,6 +328,7 @@ function DashboardContent() {
             <CampaignArchitect
               tenantName={companyName || 'Your Enterprise'}
               segmentData={segmentData}
+              onCampaignsRefreshed={setCampaigns}
             />
           </div>
         )}
@@ -366,7 +390,7 @@ export default function Dashboard() {
 }
 
 // Helper Components
-function CampaignCard({ campaign, onRunAgain, onViewROI }: any) {
+function CampaignCard({ campaign, onRunAgain, onViewROI, onDelete }: any) {
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow">
       <div className="flex justify-between items-start mb-4">
@@ -377,13 +401,22 @@ function CampaignCard({ campaign, onRunAgain, onViewROI }: any) {
             {new Date(campaign.created_at).toLocaleDateString()}
           </p>
         </div>
-        <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-          campaign.status === 'completed' ? 'bg-green-100 text-green-700' :
-          campaign.status === 'active' ? 'bg-blue-100 text-blue-700' :
-          'bg-gray-100 text-gray-700'
-        }`}>
-          {campaign.status}
-        </span>
+        <div className="flex gap-2">
+          <span className={`px-3 py-1 rounded-full text-xs font-bold ${
+            campaign.status === 'completed' ? 'bg-green-100 text-green-700' :
+            campaign.status === 'active' ? 'bg-blue-100 text-blue-700' :
+            'bg-gray-100 text-gray-700'
+          }`}>
+            {campaign.status}
+          </span>
+          <button
+            onClick={onDelete}
+            className="text-gray-500 hover:text-red-600 transition-colors"
+            title="Delete campaign"
+          >
+            <Trash2 size={18} />
+          </button>
+        </div>
       </div>
      
       <div className="grid grid-cols-2 gap-3 mb-4">

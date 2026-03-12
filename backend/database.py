@@ -310,6 +310,42 @@ def get_campaign_engagement(campaign_id: str) -> List[Dict]:
             """, (campaign_id,))
             return [dict(row) for row in cursor.fetchall()]
 
+def delete_campaign_complete(campaign_id: str) -> bool:
+    """Delete campaign rows in required order: engagement_history, campaign_details, campaigns"""
+    try:
+        with get_db_connection() as conn:
+            with get_cursor(conn) as cursor:
+                # 1) Delete from engagement_history
+                cursor.execute(
+                    "DELETE FROM jenita_dev.engagement_history WHERE campaign_id = %s;",
+                    (campaign_id,)
+                )
+                deleted_engagement = cursor.rowcount
+                
+                # 2) Delete from campaign_details
+                cursor.execute(
+                    "DELETE FROM jenita_dev.campaign_details WHERE campaign_id = %s;",
+                    (campaign_id,)
+                )
+                deleted_details = cursor.rowcount
+                
+                # 3) Delete from campaigns
+                cursor.execute(
+                    "DELETE FROM jenita_dev.campaigns WHERE campaign_id = %s;",
+                    (campaign_id,)
+                )
+                deleted_campaigns = cursor.rowcount
+                
+                print(f"Deleted campaign {campaign_id}: engagement={deleted_engagement}, details={deleted_details}, campaigns={deleted_campaigns}")
+                return deleted_campaigns > 0
+    except Exception as e:
+        print(f"Error deleting campaign {campaign_id}: {e}")
+        return False
+
+def delete_campaign(campaign_id: str) -> bool:
+    """Backward-compatible wrapper for existing callers"""
+    return delete_campaign_complete(campaign_id)
+
 def get_roi_metrics(campaign_id: str) -> Dict:
     """Get ROI metrics for a campaign"""
     with get_db_connection() as conn:

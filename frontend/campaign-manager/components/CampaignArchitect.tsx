@@ -4,13 +4,18 @@ import { Sparkles, Send, Loader2, Save, Edit3, BarChart2, Target, Calendar, Doll
 
 export default function CampaignArchitect({ 
   tenantName, 
-  segmentData = [] 
+  segmentData = [],
+  onCampaignsRefreshed
 }: { 
   tenantName: string, 
-  segmentData?: any[] 
+  segmentData?: any[],
+  onCampaignsRefreshed?: (campaigns: any[]) => void
 }) {
   const [loading, setLoading] = useState(false);
   const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [savingCampaign, setSavingCampaign] = useState(false);
+  const [activeCampaignId, setActiveCampaignId] = useState<string | null>(null);
+  const [sendingDraftIndex, setSendingDraftIndex] = useState<number | null>(null);
   
   // Expanded State for Professional Campaign Management
   const [form, setForm] = useState({ 
@@ -40,22 +45,27 @@ export default function CampaignArchitect({
     const smartContext = `Campaign Goal: ${form.objective}. Tone of Voice: ${form.tone}. Language: ${form.language}. ${form.otherDetails}`;
 
     try {
-      const res = await fetch('http://localhost:8000/api/generate-campaign', {
+      const res = await fetch('http://localhost:8000/api/campaigns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          tenant_name: tenantName, 
-          item: form.item,
-          price: Number(form.price),
-          cat: form.cat,
-          disc: Number(form.disc),
-          other_details: smartContext, // Passes the rich context to the AI
+          campaign_name: form.campaignName,
+          objective: form.objective,
+          language: form.language,
+          tone: form.tone,
+          smart_context: smartContext,
           customer_data: segmentData 
         }),
       });
       const data = await res.json();
       if (data.status === "success") {
-        setCampaigns(data.campaigns);
+        const normalizedDrafts = (data.segments || data.campaigns || []).map((segment: any) => ({
+          target_segment: segment.target_segment || segment.segment_name || "Target Audience",
+          subject: segment.subject || `Campaign Message for ${segment.segment_name || "Audience"}`,
+          body: segment.body || segment.generated_message || ""
+        }));
+        setCampaigns(normalizedDrafts);
+        setActiveCampaignId(data.campaign_id || null);
       } else {
         alert("Server Error: " + data.detail);
       }
@@ -63,6 +73,125 @@ export default function CampaignArchitect({
       alert("Check if Backend is running.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSaveCampaign = async () => {
+    if (!form.campaignName.trim()) {
+      alert("Please enter a campaign name");
+      return;
+    }
+    if (!segmentData || segmentData.length === 0) {
+      alert("Please select a target audience");
+      return;
+    }
+    
+    setSavingCampaign(true);
+    
+    const smartContext = `Campaign Goal: ${form.objective}. Tone of Voice: ${form.tone}. Language: ${form.language}. ${form.otherDetails}`;
+    
+    try {
+      const res = await fetch('http://localhost:8000/api/campaigns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          campaign_name: form.campaignName,
+          budget: form.budget ? Number(form.budget) : null,
+          language: form.language,
+          objective: form.objective,
+          tone: form.tone,
+          target_audience_filter: {},
+          smart_context: smartContext,
+          customer_data: segmentData
+        }),
+      });
+      const data = await res.json();
+      if (data.status === "success") {
+        const refreshRes = await fetch('http://localhost:8000/api/campaigns');
+        const refreshData = await refreshRes.json();
+        if (refreshData.status === "success") {
+          onCampaignsRefreshed?.(Array.isArray(refreshData.campaigns) ? refreshData.campaigns : []);
+        }
+
+        // Clear generated draft cards after save so UI remains clean
+        setCampaigns([]);
+        setActiveCampaignId(null);
+
+        alert(`Campaign "${form.campaignName}" saved successfully!`);
+        // Reset form after successful save
+        setForm({
+          campaignName: '',
+          objective: 'Lead Generation',
+          channel: 'Email',
+          startDate: '',
+          endDate: '',
+          budget: '',
+          language: 'English',
+          tone: 'Professional',
+          item: '',
+          price: '',
+          cat: 'Fashion',
+          disc: 15,
+          otherDetails: ''
+        });
+      } else {
+        alert("Error: " + data.detail);
+      }
+    } catch (error) {
+      alert("Failed to save campaign. Check if Backend is running.");
+    } finally {
+      setSavingCampaign(false);
+    }
+  };
+
+  const handleSendCampaignNow = async (camp: any, index: number) => {
+    if (!activeCampaignId) {
+      alert("Please generate campaign drafts first.");
+      return;
+    }
+
+    const segmentName = camp.target_segment || "Target Audience";
+    const customerIds = Array.from(
+      new Set(
+        (segmentData || [])
+          .filter((customer: any) => customer.segment_name === segmentName)
+          .map((customer: any) => String(customer.customer_id))
+          .filter(Boolean)
+      )
+    );
+
+    setSendingDraftIndex(index);
+    try {
+      const res = await fetch(`http://localhost:8000/api/campaigns/${activeCampaignId}/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          campaign_id: activeCampaignId,
+          recipients: [
+            "jeniroselin20@gmail.com",
+            "yuvasrieswara77@gmail.com"
+          ],
+          segment_messages: [
+            {
+              segment_name: segmentName,
+              customer_ids: customerIds,
+              message: camp.body,
+              subject: camp.subject
+            }
+          ]
+        }),
+      });
+
+      const data = await res.json();
+      if (data.status === "success") {
+        alert(`Campaign sent successfully to ${data.sent ?? 0} recipient(s).`);
+      } else {
+        alert("Send failed: " + (data.detail || data.message || "Unknown error"));
+      }
+    } catch (error) {
+      alert("Failed to send campaign. Check if backend server is running and authenticated.");
+    } finally {
+      setSendingDraftIndex(null);
     }
   };
 
@@ -159,7 +288,7 @@ export default function CampaignArchitect({
       </div>
 
       {/* SECTION 4: Generated Drafts & Lifecycle Management */}
-      {campaigns.length > 0 && (
+      {campaigns && campaigns.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in fade-in duration-500">
           {campaigns.map((camp, i) => (
             <div key={i} className="bg-white p-6 rounded-[2rem] border-t-4 border-indigo-500 shadow-lg flex flex-col">
@@ -182,13 +311,25 @@ export default function CampaignArchitect({
                   <Edit3 size={16} /> Edit Copy
                 </button>
                 <button className="bg-gray-100 text-gray-600 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-gray-200 text-sm transition-all">
-                  <Save size={16} /> Save Campaign
+                  <Save size={16} /> Save to Draft
                 </button>
               </div>
               
               <div className="grid grid-cols-2 gap-2">
-                <button className="bg-[#0F172A] text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-black text-sm transition-all shadow-md">
-                  <Send size={16} /> Send Now
+                <button
+                  onClick={() => handleSendCampaignNow(camp, i)}
+                  disabled={sendingDraftIndex === i}
+                  className="bg-[#0F172A] text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-black text-sm transition-all shadow-md disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  {sendingDraftIndex === i ? (
+                    <>
+                      <Loader2 className="animate-spin" size={16} /> Sending...
+                    </>
+                  ) : (
+                    <>
+                      <Send size={16} /> Send Now
+                    </>
+                  )}
                 </button>
                 <button className="border-2 border-indigo-100 text-indigo-600 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-indigo-50 text-sm transition-all">
                   <BarChart2 size={16} /> View ROI
@@ -198,6 +339,27 @@ export default function CampaignArchitect({
           ))}
         </div>
       )}
+
+      {/* Primary Action: Save Campaign Button - Always Visible */}
+      <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100">
+        <button
+          onClick={handleSaveCampaign}
+          disabled={savingCampaign}
+          className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold flex items-center justify-center gap-2 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-all shadow-lg"
+        >
+          {savingCampaign ? (
+            <>
+              <Loader2 className="animate-spin" size={20} />
+              Saving Campaign...
+            </>
+          ) : (
+            <>
+              <Save size={20} />
+              Save Campaign
+            </>
+          )}
+        </button>
+      </div>
     </div>
   );
 }

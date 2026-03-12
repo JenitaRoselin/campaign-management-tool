@@ -12,6 +12,7 @@ import pandas as pd
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from dotenv import load_dotenv
 
 # Google Auth & API
 from google.oauth2.credentials import Credentials
@@ -25,6 +26,7 @@ import database as db
 
 # --- CRITICAL FIX: Allow HTTP and bypass PKCE memory issues ---
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+load_dotenv()
 
 app = FastAPI()
 
@@ -32,13 +34,14 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
 # --- INITIALIZATION ---
 ai_model = CustomerSegmentationAI(n_clusters=4)
 HF_TOKEN = os.getenv("HF_TOKEN", "")
+print(f'DEBUG: HF Token found with length {len(HF_TOKEN)}')
 campaign_engine = CampaignEngine(hf_token=HF_TOKEN)
 SCOPES = ['https://www.googleapis.com/auth/gmail.send']
 
@@ -71,6 +74,7 @@ class CreateCampaignRequest(BaseModel):
 class BulkEmailRequest(BaseModel):
     campaign_id: str
     segment_messages: List[dict]  # List of {segment_name, customer_ids, message, subject}
+    recipients: Optional[List[str]] = None  # Explicit recipient emails (used by Send Now button)
 
 class SegmentCustomersRequest(BaseModel):
     customer_ids: Optional[List[str]] = None  # If None, fetch all customers
@@ -291,6 +295,7 @@ async def segment_customers_dynamic(req: SegmentCustomersRequest):
 @app.post("/api/campaigns")
 async def create_campaign_endpoint(req: CreateCampaignRequest):
     """Create a new campaign and save to database"""
+    print(f"Received Request: {req.dict()}")
     try:
         tenant = db.get_default_tenant()
         if not tenant:
@@ -310,59 +315,97 @@ async def create_campaign_endpoint(req: CreateCampaignRequest):
         
         campaign_id = db.create_campaign(tenant['tenant_id'], campaign_data)
         
-        # Generate AI messages for each segment
-        # Group customers by segment
-        segments = {}
-        for customer in req.customer_data:
-            segment = customer.get('segment_name', 'Unknown')
-            if segment not in segments:
-                segments[segment] = {
-                    'customers': [],
-                    'avg_spend': 0,
-                    'count': 0
+        # Calculate total spend per segment from customer_data
+        segment_aggregates = {}
+        for item in req.customer_data:
+            segment_name = str(item.get('segment_name') or item.get('segment') or 'Unknown').strip() or 'Unknown'
+            if segment_name not in segment_aggregates:
+                segment_aggregates[segment_name] = {
+                    'customer_count': 0,
+                    'total_spend': 0.0
                 }
-            segments[segment]['customers'].append(customer)
-            segments[segment]['avg_spend'] += customer.get('total_spent', 0)
-            segments[segment]['count'] += 1
-        
-        # Calculate average spend and rank segments
+
+            # Count customers in this segment
+            customer_count = 0
+            if isinstance(item.get('customer_ids'), list):
+                customer_count = len(item.get('customer_ids', []))
+            elif isinstance(item.get('customers'), list):
+                customer_count = len(item.get('customers', []))
+            elif item.get('customer_count') is not None:
+                try:
+                    customer_count = max(0, int(item.get('customer_count')))
+                except (TypeError, ValueError):
+                    customer_count = 0
+            else:
+                customer_count = 1
+
+            # Extract and convert total_spent to float safely
+            spend_value = item.get('total_spent')
+            if spend_value is None:
+                spend_value = item.get('monetary')
+
+            try:
+                if spend_value is not None:
+                    total_spend = float(spend_value)
+                elif item.get('avg_spend') is not None and customer_count > 0:
+                    total_spend = float(item.get('avg_spend')) * customer_count
+                else:
+                    total_spend = 0.0
+            except (TypeError, ValueError):
+                total_spend = 0.0
+
+            segment_aggregates[segment_name]['customer_count'] += customer_count
+            segment_aggregates[segment_name]['total_spend'] += max(0.0, total_spend)
+
+        # Build segment details with total spend
         segment_details = []
-        for segment_name, data in segments.items():
-            data['avg_spend'] = data['avg_spend'] / data['count'] if data['count'] > 0 else 0
+        for segment_name, values in segment_aggregates.items():
+            customer_count = values['customer_count']
+            total_spend = values['total_spend']
             segment_details.append({
                 'segment_name': segment_name,
-                'customer_count': data['count'],
-                'avg_spend': data['avg_spend'],
-                'customers': data['customers']
+                'customer_count': customer_count,
+                'total_spend': total_spend
             })
-        
-        # Sort by avg_spend and mark top 2 as recommended
-        segment_details.sort(key=lambda x: x['avg_spend'], reverse=True)
-        
-        # Generate messages using campaign engine
+
+        # Sort by total_spend (descending), then alphabetically by segment_name for tie-breaking
+        segment_details.sort(key=lambda x: (-x['total_spend'], x['segment_name']))
+
+        campaign_tone = req.tone or 'Professional'
+        campaign_objective = req.objective or 'Sales'
+        campaign_context = req.smart_context or ''
+
         generated_segments = []
         for i, segment in enumerate(segment_details):
             is_recommended = i < 2  # Top 2 segments
             
-            # Use campaign engine to generate message
-            # For now, create a simple template-based message
-            message = campaign_engine.generate_segment_message(
-                tenant_name=tenant['tenant_name'],
-                segment_name=segment['segment_name'],
-                tone=req.tone,
-                objective=req.objective,
-                context=req.smart_context
-            )
-            
+            # Wrap AI generation in try-except for stability
+            try:
+                message = campaign_engine.generate_segment_message(
+                    tenant_name=tenant['tenant_name'],
+                    segment_name=segment['segment_name'],
+                    tone=campaign_tone,
+                    objective=campaign_objective,
+                    context=campaign_context
+                )
+            except Exception as ai_error:
+                print(f"AI generation error for segment {segment['segment_name']}: {ai_error}")
+                message = None
+
+            # Use fallback message if AI generation failed or returned empty
+            if not isinstance(message, str) or not message.strip():
+                message = f"Dear Valued Customer,\n\nWe have a special offer for you based on your preferences.\n\n{campaign_context}\n\nBest regards,\n{tenant['tenant_name']} Team"
+
             generated_segments.append({
                 'segment_name': segment['segment_name'],
                 'is_recommended': is_recommended,
                 'generated_message': message,
                 'customer_count': segment['customer_count']
             })
-        
-        # Save campaign details
-        db.save_campaign_details(campaign_id, generated_segments)
+
+        # Save campaign details only when there are generated segment rows
+        if generated_segments:
+            db.save_campaign_details(campaign_id, generated_segments)
         
         return {
             "status": "success",
@@ -379,18 +422,42 @@ async def run_campaign(campaign_id: str, email_req: BulkEmailRequest):
     Run a campaign by sending emails to filtered recipients
     For development: Only sends to whitelisted emails
     """
-    WHITELISTED_EMAILS = [
-        "jeniroselin20@gmail.com",
-        "yuvasrieswara77@gmail.com"
-    ]
-    
     if not os.path.exists('token.json'):
         raise HTTPException(status_code=401, detail="Please authenticate via /api/auth/google first")
     
     try:
         tenant = db.get_default_tenant()
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+        
+        # Log token permissions for debugging
+        print(f"Gmail token scopes: {creds.scopes}")
+        
         service = build('gmail', 'v1', credentials=creds)
+        
+        # Fetch test emails from database for whitelist
+        WHITELISTED_EMAILS = [
+            "jeniroselin20@gmail.com",
+            "yuvasrieswara77@gmail.com"
+        ]
+
+        requested_recipients = []
+        if email_req.recipients:
+            requested_recipients = [
+                email.strip()
+                for email in email_req.recipients
+                if isinstance(email, str) and email.strip()
+            ]
+            # De-duplicate while preserving order
+            requested_recipients = list(dict.fromkeys(requested_recipients))
+
+        try:
+            all_customers = db.get_all_customers(tenant['tenant_id'])
+            test_emails = [c.get('customer_email') for c in all_customers if c.get('customer_email')]
+            WHITELISTED_EMAILS.extend(test_emails)
+            WHITELISTED_EMAILS = list(set(WHITELISTED_EMAILS))  # Remove duplicates
+            print(f"Expanded whitelist with {len(test_emails)} emails from database. Total whitelisted: {len(WHITELISTED_EMAILS)}")
+        except Exception as db_error:
+            print(f"Warning: Could not fetch customers for whitelist: {db_error}. Using default whitelist only.")
         
         sent_count = 0
         failed_count = 0
@@ -398,22 +465,57 @@ async def run_campaign(campaign_id: str, email_req: BulkEmailRequest):
         # Process each segment's messages
         for segment_msg in email_req.segment_messages:
             segment_name = segment_msg['segment_name']
-            customer_ids = segment_msg['customer_ids']
+            customer_ids = segment_msg.get('customer_ids', [])
             message_body = segment_msg['message']
             subject = segment_msg['subject']
             
+            print(f"Processing segment '{segment_name}' with {len(customer_ids)} customer(s)...")
+
+            # Primary flow for frontend Send Now: explicit recipient list
+            if requested_recipients:
+                for recipient_email in requested_recipients:
+                    if recipient_email not in WHITELISTED_EMAILS:
+                        print(f"  Skipping {recipient_email} (not whitelisted)")
+                        continue
+
+                    print(f"  Sending to {recipient_email}...")
+
+                    try:
+                        message = EmailMessage()
+                        message.set_content(message_body)
+                        message['To'] = recipient_email
+                        message['From'] = "me"
+                        message['Subject'] = subject
+
+                        encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+                        service.users().messages().send(
+                            userId="me",
+                            body={'raw': encoded_message}
+                        ).execute()
+
+                        print(f"  ✓ Email sent to {recipient_email}")
+                        sent_count += 1
+                    except Exception as email_error:
+                        print(f"  ✗ Failed to send to {recipient_email}: {email_error}")
+                        failed_count += 1
+                continue
+
+            # Backward-compatible flow: send to customers by IDs (if provided)
             for customer_id in customer_ids:
                 # Get customer email
                 customer = db.get_customer_with_purchases(customer_id)
                 if not customer or not customer.get('customer_email'):
+                    print(f"  Skipping customer {customer_id}: No email found")
                     continue
                 
                 recipient_email = customer['customer_email']
                 
                 # DEVELOPMENT FILTER: Only send to whitelisted emails
                 if recipient_email not in WHITELISTED_EMAILS:
-                    print(f"Skipping {recipient_email} (not whitelisted)")
+                    print(f"  Skipping {recipient_email} (not whitelisted)")
                     continue
+                
+                print(f"  Sending to {recipient_email}...")
                 
                 try:
                     # Send email
@@ -429,6 +531,8 @@ async def run_campaign(campaign_id: str, email_req: BulkEmailRequest):
                         body={'raw': encoded_message}
                     ).execute()
                     
+                    print(f"  ✓ Email sent to {recipient_email}")
+                    
                     # Record engagement (initial send)
                     db.record_engagement(
                         tenant['tenant_id'],
@@ -441,7 +545,7 @@ async def run_campaign(campaign_id: str, email_req: BulkEmailRequest):
                     
                     sent_count += 1
                 except Exception as email_error:
-                    print(f"Failed to send to {recipient_email}: {email_error}")
+                    print(f"  ✗ Failed to send to {recipient_email}: {email_error}")
                     failed_count += 1
         
         # Update campaign run count
@@ -503,6 +607,21 @@ async def send_email(req: EmailRequest):
         service.users().messages().send(userId="me", body={'raw': encoded_message}).execute()
         return {"status": "success"}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/campaigns/{campaign_id}")
+async def delete_campaign_endpoint(campaign_id: str):
+    """Delete a campaign and all related data"""
+    try:
+        success = db.delete_campaign_complete(campaign_id)
+        if success:
+            return {"status": "success", "message": f"Campaign {campaign_id} deleted"}
+        else:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting campaign: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
